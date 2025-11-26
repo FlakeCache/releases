@@ -1,0 +1,69 @@
+name: 'FlakeCache Nix Installer'
+description: 'Install Nix with FlakeCache binary cache - works on GitHub-hosted, self-hosted, and containers'
+author: 'FlakeCache'
+branding:
+  icon: 'package'
+  color: 'blue'
+
+inputs:
+  flakecache:
+    description: 'Enable FlakeCache binary cache'
+    required: false
+    default: 'true'
+  install-cli:
+    description: 'Install FlakeCache CLI'
+    required: false
+    default: 'false'
+  cli-version:
+    description: 'CLI version (default: latest)'
+    required: false
+    default: 'latest'
+  extra-substituters:
+    description: 'Additional binary cache URLs'
+    required: false
+    default: ''
+  extra-trusted-keys:
+    description: 'Additional trusted public keys'
+    required: false
+    default: ''
+  extra-conf:
+    description: 'Extra nix.conf lines'
+    required: false
+    default: ''
+
+outputs:
+  nix-path:
+    description: 'Path to Nix binary'
+    value: ${{ steps.setup.outputs.nix-path }}
+  cli-path:
+    description: 'Path to FlakeCache CLI'
+    value: ${{ steps.setup.outputs.cli-path }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup FlakeCache
+      id: setup
+      shell: bash
+      run: |
+        # Download and run setup binary
+        OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+        ARCH=$(uname -m)
+        case "$OS" in linux) P="linux";; darwin) P="macos";; esac
+        case "$ARCH" in x86_64) A="x86_64";; aarch64|arm64) A="aarch64";; esac
+
+        BINARY="${{ github.action_path }}/dist/flakecache-action-${P}-${A}"
+
+        if [ -f "$BINARY" ]; then
+          chmod +x "$BINARY"
+          "$BINARY" \
+            --flakecache="${{ inputs.flakecache }}" \
+            --install-cli="${{ inputs.install-cli }}" \
+            --cli-version="${{ inputs.cli-version }}" \
+            --extra-substituters="${{ inputs.extra-substituters }}" \
+            --extra-trusted-keys="${{ inputs.extra-trusted-keys }}" \
+            --extra-conf="${{ inputs.extra-conf }}"
+        else
+          echo "❌ Binary not found: $BINARY"
+          exit 1
+        fi
