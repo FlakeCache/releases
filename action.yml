@@ -41,6 +41,15 @@ outputs:
   cli-path:
     description: 'Path to FlakeCache CLI (if installed)'
     value: ${{ steps.install-cli.outputs.cli-path }}
+  flakecache-runner:
+    description: 'Whether running on a FlakeCache managed runner'
+    value: ${{ steps.check.outputs.flakecache-runner }}
+  cache-hit:
+    description: 'Whether cache was available (always true on FlakeCache runners)'
+    value: ${{ steps.check.outputs.flakecache-runner }}
+  cache-path:
+    description: 'Path to Nix store for caching'
+    value: '/nix'
 
 runs:
   using: 'composite'
@@ -49,10 +58,29 @@ runs:
       id: check
       shell: bash
       run: |
+        # Check if on FlakeCache managed runner (has /nix pre-mounted)
+        if [ "$FLAKECACHE_RUNNER" = "true" ]; then
+          echo "🚀 FlakeCache runner detected"
+          echo "flakecache-runner=true" >> $GITHUB_OUTPUT
+
+          # FlakeCache runners have /nix mounted read-only with daemon sidecar
+          if [ -x /nix/var/nix/profiles/default/bin/nix ]; then
+            echo "/nix/var/nix/profiles/default/bin" >> $GITHUB_PATH
+            echo "nix-path=/nix/var/nix/profiles/default/bin/nix" >> $GITHUB_OUTPUT
+            echo "installed=true" >> $GITHUB_OUTPUT
+            echo "daemon-mode=true" >> $GITHUB_OUTPUT
+            echo "✅ Nix available via FlakeCache runner"
+            /nix/var/nix/profiles/default/bin/nix --version
+          else
+            echo "⚠️ FlakeCache runner but Nix binary not found at expected path"
+            echo "installed=false" >> $GITHUB_OUTPUT
+            echo "daemon-mode=false" >> $GITHUB_OUTPUT
+          fi
         # Check if running in daemon mode (nix-daemon sidecar)
-        if [ "$NIX_REMOTE" = "daemon" ] && [ -S /nix/var/nix/daemon-socket/socket ]; then
+        elif [ "$NIX_REMOTE" = "daemon" ] && [ -S /nix/var/nix/daemon-socket/socket ]; then
           echo "installed=true" >> $GITHUB_OUTPUT
           echo "daemon-mode=true" >> $GITHUB_OUTPUT
+          echo "flakecache-runner=false" >> $GITHUB_OUTPUT
           echo "🔒 Nix daemon mode detected"
           # In daemon mode, nix binary might be in container, use socket
           if [ -x /nix/var/nix/profiles/default/bin/nix ]; then
@@ -65,6 +93,7 @@ runs:
           fi
         else
           echo "daemon-mode=false" >> $GITHUB_OUTPUT
+          echo "flakecache-runner=false" >> $GITHUB_OUTPUT
           # Check multiple locations for Nix
           NIX_PATH=""
           if command -v nix &> /dev/null; then
@@ -87,17 +116,12 @@ runs:
             echo "📦 Nix not found, will install"
           fi
         fi
-        
-        # Check if we should run in container mode
-        if [ "$FLAKECACHE_RUNNER" = "true" ] && [ -n "$NIX_CONTAINER_IMAGE" ]; then
-          echo "container-mode=true" >> $GITHUB_OUTPUT
-          echo "🚀 FlakeCache runner detected, will use container: $NIX_CONTAINER_IMAGE"
-        else
-          echo "container-mode=false" >> $GITHUB_OUTPUT
-        fi
+
+        # Container mode only applies to non-FlakeCache runners with NIX_CONTAINER_IMAGE
+        echo "container-mode=false" >> $GITHUB_OUTPUT
 
     - name: Install Nix
-      if: steps.check.outputs.installed == 'false' && steps.check.outputs.container-mode == 'false'
+      if: steps.check.outputs.installed == 'false' && steps.check.outputs.flakecache-runner != 'true'
       shell: bash
       run: |
         echo "🔧 Installing Nix..."
